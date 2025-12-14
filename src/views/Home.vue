@@ -30,9 +30,9 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import NavBar from '@/components/NavBar.vue'
 
 const images = ref([
-  '/public/images/Elysia.png',
-  '/public/images/Elysia1.webp',
-  '/public/images/Seele.png'
+  '/images/Elysia.png',
+  '/images/Elysia1.webp',
+  '/images/Seele.png'
 ])
 const currentIndex = ref(0)
 let carouselInterval: number | undefined
@@ -171,7 +171,12 @@ onUnmounted(() => {
   position: absolute;
   top: 0;
   left: 0;
-  transition: opacity 0.5s ease-in-out;
+  opacity: 0; /* Start with opacity 0 */
+  transition: opacity 1s ease-in-out; /* Fade transition */
+}
+
+.carousel-image[v-show="true"] {
+  opacity: 1; /* Show current image with opacity 1 */
 }
 
 .carousel-button {
