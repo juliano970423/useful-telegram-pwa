@@ -13,9 +13,10 @@
       <div class="controls-content">
         <div class="difficulty-selector">
           <label class="control-label">難度</label>
-          <mdui-segmented-button-group 
-            :value="difficulty"
+          <mdui-segmented-button-group
             selects="single"
+            value="easy"
+            ref="difficultyGroupRef"
             @change="handleDifficultyChange"
           >
             <mdui-segmented-button value="easy">簡單</mdui-segmented-button>
@@ -43,15 +44,20 @@
       </div>
     </mdui-card>
 
-    <div v-if="isGameActive" class="game-board">
-      <div 
-        v-if="cards.length > 0"
+    <div class="game-board">
+      <div
+        v-if="cards.length > 0 && isGameActive"
         class="cards-grid"
-        :style="{ gridTemplateColumns: `repeat(${gridSize}, 1fr)` }"
-      >
+        :style="{
+          gridTemplateColumns: `repeat(${gridSize}, 1fr)`,
+          '--grid-size': gridSize,
+          '--gap-count': gridSize - 1
+        }"
+        :key="`active-grid-${gridSize}`"
+      > <!-- Force re-render when grid size changes -->
         <mdui-card
           v-for="(card, index) in cards"
-          :key="card.id + '-' + index"
+          :key="`${card.id}-${index}-${gridSize}`"
           class="card"
           :class="{
             'flipped': card.isFlipped || card.isMatched,
@@ -71,6 +77,31 @@
             </div>
           </div>
         </mdui-card>
+      </div>
+      <!-- Show empty grid when no game is active but difficulty has been selected -->
+      <div
+        v-else-if="!isGameActive"
+        class="cards-grid"
+        :style="{
+          gridTemplateColumns: `repeat(${gridSize}, 1fr)`,
+          '--grid-size': gridSize,
+          '--gap-count': gridSize - 1
+        }"
+        :key="`grid-${gridSize}`"
+      > <!-- Force re-render when grid size changes -->
+        <div
+          v-for="n in totalCards"
+          :key="`empty-${n}-${gridSize}`"
+          class="card-placeholder"
+        >
+          <mdui-card class="card empty-card" variant="elevated">
+            <div class="card-inner">
+              <div class="card-front">
+                <span class="card-icon">?</span>
+              </div>
+            </div>
+          </mdui-card>
+        </div>
       </div>
     </div>
 
@@ -106,7 +137,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted, nextTick, onMounted } from 'vue'
 import 'mdui/components/card.js'
 import 'mdui/components/button.js'
 import 'mdui/components/segmented-button.js'
@@ -124,6 +155,7 @@ interface Card {
   pairId: number
 }
 
+const difficultyGroupRef = ref()
 const difficulty = ref<'easy' | 'medium' | 'hard'>('easy')
 const isGameActive = ref(false)
 const isProcessing = ref(false)
@@ -163,11 +195,11 @@ function generateCardPatterns(count: number): Array<{ pattern: string; pairId: n
   const patterns = []
   const shapeTypes = ['circle', 'square', 'triangle', 'star', 'diamond', 'heart', 'hexagon', 'cross']
   const usedShapes = shapeTypes.slice(0, Math.min(count, shapeTypes.length))
-  
+
   if (count <= 0) {
     return []
   }
-  
+
   // 為每個圖案生成配對
   for (let i = 0; i < count; i++) {
     try {
@@ -175,20 +207,24 @@ function generateCardPatterns(count: number): Array<{ pattern: string; pairId: n
       const color = `hsl(${(i * 360 / count)}, 70%, 60%)`
       const rotation = Math.floor(Math.random() * 4) * 45
       const size = 40 + (Math.random() * 20)
-      
-      const pattern = generateSVGPattern(shape!, color, rotation, size)
-      
+
+      let pattern = generateSVGPattern(shape!, color, rotation, size)
+
+      // Additional sanitization to ensure no comment-like strings exist
+      pattern = pattern.replace(/<!--[\s\S]*?-->/g, '').trim()
+
       // 每個圖案生成兩張卡片（一對）
       patterns.push({ pattern, pairId: i })
       patterns.push({ pattern, pairId: i })
     } catch (error) {
+      console.error('Error generating card pattern:', error)
       // 使用簡單的備用圖案
       const fallbackPattern = `<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="30" fill="hsl(${i * 360 / count}, 70%, 60%)"/></svg>`
       patterns.push({ pattern: fallbackPattern, pairId: i })
       patterns.push({ pattern: fallbackPattern, pairId: i })
     }
   }
-  
+
   // 洗牌
   return patterns.sort(() => Math.random() - 0.5)
 }
@@ -197,9 +233,9 @@ function generateSVGPattern(shape: string, color: string, rotation: number, size
   try {
     const center = 50
     const radius = size / 2
-    
+
     let svgContent = ''
-    
+
     switch (shape) {
       case 'circle':
         svgContent = `<circle cx="${center}" cy="${center}" r="${radius}" fill="${color}"/>`
@@ -230,9 +266,20 @@ function generateSVGPattern(shape: string, color: string, rotation: number, size
       default:
         svgContent = `<circle cx="${center}" cy="${center}" r="${radius}" fill="${color}"/>`
     }
-    
-    return `<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">${svgContent}</svg>`
+
+    // More thorough sanitization to prevent any potential issues with Vue processing
+    let sanitizedContent = svgContent
+      .replace(/<!--[\s\S]*?-->/g, '') // Remove HTML comments
+      .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '') // Remove CDATA sections
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .trim()
+
+    // Ensure no comment-like sequences remain that might confuse Vue
+    sanitizedContent = sanitizedContent.replace(/<!(?!--)/g, '&lt;!')
+
+    return `<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">${sanitizedContent}</svg>`
   } catch (error) {
+    console.error('Error generating SVG pattern:', error)
     // 返回一個簡單的圓形作為備用
     return `<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="20" fill="red"/></svg>`
   }
@@ -262,10 +309,8 @@ function generateStarPath(cx: number, cy: number, outerRadius: number, color: st
 
 function generateHeartPath(cx: number, cy: number, size: number, color: string, rotation: number): string {
   const scale = size / 25
-  const path = `M ${cx},${cy + 10 * scale} 
-    C ${cx},${cy + 10 * scale} ${cx - 20 * scale},${cy - 15 * scale} ${cx},${cy - 5 * scale}
-    C ${cx + 20 * scale},${cy - 15 * scale} ${cx},${cy + 10 * scale} ${cx},${cy + 10 * scale} Z`
-  
+  const path = `M ${cx},${cy + 10 * scale} C ${cx},${cy + 10 * scale} ${cx - 20 * scale},${cy - 15 * scale} ${cx},${cy - 5 * scale} C ${cx + 20 * scale},${cy - 15 * scale} ${cx},${cy + 10 * scale} ${cx},${cy + 10 * scale} Z`
+
   return `<path d="${path}" fill="${color}" transform="rotate(${rotation} ${cx} ${cy})"/>`
 }
 
@@ -283,31 +328,33 @@ function generateHexagonPath(cx: number, cy: number, radius: number, color: stri
 
 function generateCrossPath(cx: number, cy: number, radius: number, color: string, rotation: number): string {
   const thickness = radius * 0.3
-  const cross = `
-    <rect x="${cx - thickness/2}" y="${cy - radius}" width="${thickness}" height="${radius * 2}" fill="${color}" transform="rotate(${rotation} ${cx} ${cy})"/>
-    <rect x="${cx - radius}" y="${cy - thickness/2}" width="${radius * 2}" height="${thickness}" fill="${color}" transform="rotate(${rotation} ${cx} ${cy})"/>
-  `
+  const cross = `<rect x="${cx - thickness/2}" y="${cy - radius}" width="${thickness}" height="${radius * 2}" fill="${color}" transform="rotate(${rotation} ${cx} ${cy})"/><rect x="${cx - radius}" y="${cy - thickness/2}" width="${radius * 2}" height="${thickness}" fill="${color}" transform="rotate(${rotation} ${cx} ${cy})"/>`
   return cross
 }
 
 function startGame() {
   try {
+    // 从组件获取当前难度值
+    if (difficultyGroupRef.value) {
+      difficulty.value = difficultyGroupRef.value.value;
+    }
+
     isGameActive.value = true
     gameCompleted.value = false
     matchedPairs.value = 0
     flipCount.value = 0
     gameTime.value = 0
     flippedCards.value = []
-    
+
     // 強制重置卡片
     cards.value = []
-    
+
     // 延遲一下確保DOM更新
     setTimeout(() => {
       initializeCards()
       startTimer()
     }, 100)
-    
+
   } catch (error) {
     isGameActive.value = false
   }
@@ -411,23 +458,33 @@ function resetGame() {
   flipCount.value = 0
   gameTime.value = 0
   flippedCards.value = []
-  cards.value = []
-  
+  cards.value = []  // This will trigger the grid to update based on the current difficulty
+
   if (timerInterval.value) {
     clearInterval(timerInterval.value)
   }
 }
 
-function changeDifficulty(newDifficulty: string) {
-  difficulty.value = newDifficulty as 'easy' | 'medium' | 'hard'
-  resetGame()
+function changeDifficulty(newDifficulty: 'easy' | 'medium' | 'hard') {
+  // Always reset the game when difficulty changes to update the grid
+  resetGame();
+
+  // If no game is active, we need to initialize cards for the new difficulty
+  if (!isGameActive.value) {
+    // 使用 setTimeout 确保 DOM 更新后再初始化卡片
+    setTimeout(() => {
+      initializeCards();
+    }, 0);
+  }
 }
 
 
 
 function handleDifficultyChange(event: CustomEvent) {
-  const newDifficulty = event.detail.value
-  changeDifficulty(newDifficulty)
+  const newDifficulty = event.detail.value as 'easy' | 'medium' | 'hard';
+  // 更新 Vue 的响应式数据
+  difficulty.value = newDifficulty;
+  changeDifficulty(newDifficulty);
 }
 
 const averageFlipsPerPair = computed(() => {
@@ -441,6 +498,7 @@ function getPerformanceRating(): string {
   if (efficiency <= 2.0) return '一般'
   return '需要練習'
 }
+
 
 onUnmounted(() => {
   if (timerInterval.value) {
@@ -534,12 +592,32 @@ onUnmounted(() => {
   perspective: 1000px;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
-  min-height: 100px;
-  min-width: 100px;
+  min-height: 80px;
+  min-width: 80px;
+  max-width: calc((100vw - 4rem - var(--gap-count, 3) * 0.75rem) / var(--grid-size, 4));
+  max-height: calc((100vw - 4rem - var(--gap-count, 3) * 0.75rem) / var(--grid-size, 4));
+  width: 100%;
+  height: 100%;
   --shape-corner: var(--md-sys-shape-corner-large, 12px);
+  --grid-size: 4;
+  --gap-count: 3;
 }
 
-.card:hover:not(.disabled) {
+@media (min-width: 768px) {
+  .card {
+    max-width: calc((600px - (var(--grid-size, 4) - 1) * 0.75rem) / var(--grid-size, 4));
+    max-height: calc((600px - (var(--grid-size, 4) - 1) * 0.75rem) / var(--grid-size, 4));
+    min-height: 60px;
+    min-width: 60px;
+  }
+}
+
+.card.empty-card {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.card:hover:not(.disabled):not(.empty-card) {
   transform: scale(1.05);
 }
 
